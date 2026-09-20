@@ -328,7 +328,8 @@ router.post('/upload', requireAdmin, upload.single('image'), async (req, res) =>
       const blob = await put(`products/${Date.now()}-${safeName}`, req.file.buffer, {
         access: 'public',
         contentType: req.file.mimetype,
-        addRandomSuffix: true
+        addRandomSuffix: true,
+        token: process.env.BLOB_READ_WRITE_TOKEN
       });
       return res.json({
         message: 'Image uploaded successfully.',
@@ -350,6 +351,11 @@ router.post('/upload', requireAdmin, upload.single('image'), async (req, res) =>
     });
   } catch (err) {
     console.error('Upload error:', err);
+    if (err && (err.status === 401 || err.status === 403 || /access denied|valid token/i.test(err.message || ''))) {
+      return res.status(503).json({
+        error: 'Vercel Blob rejected the configured token. Create a new Blob token for this Vercel project and redeploy.'
+      });
+    }
     res.status(500).json({ error: 'Failed to upload image: ' + (err.message || '') });
   }
 });
