@@ -6,7 +6,7 @@
 const path = require('path');
 const fs = require('fs');
 
-const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const DATABASE_URL = process.env.DATABASE_URL;
 const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const usePostgres = Boolean(DATABASE_URL);
 
@@ -59,10 +59,10 @@ async function initPostgres() {
       type VARCHAR(255) DEFAULT '',
       short_description TEXT DEFAULT '',
       full_description TEXT DEFAULT '',
-      image_path VARCHAR(500) DEFAULT '',
+      image_path TEXT DEFAULT '',
       additional_images TEXT DEFAULT '[]',
       specifications TEXT DEFAULT '[]',
-      brochure_path VARCHAR(500) DEFAULT '',
+      brochure_path TEXT DEFAULT '',
       sku VARCHAR(100) DEFAULT '',
       brand VARCHAR(255) DEFAULT '',
       badge_text VARCHAR(100) DEFAULT '',
@@ -87,50 +87,6 @@ async function initPostgres() {
     CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug);
   `);
 
-  // Ensure image_path can store large Base64 strings in Postgres
-  try {
-    await pgPool.query('ALTER TABLE products ALTER COLUMN image_path TYPE TEXT;');
-  } catch (alterErr) {
-    console.warn('Could not alter image_path type:', alterErr.message);
-  }
-
-}
-
-async function seedFromBackupPg() {
-  const backupFile = path.join(__dirname, '..', 'data', 'backup_catalogue.json');
-  if (!fs.existsSync(backupFile)) return;
-  const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
-
-  for (const c of backup.categories) {
-    await pgPool.query(
-      `INSERT INTO categories (id, name, slug, icon, display_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, slug=EXCLUDED.slug, icon=EXCLUDED.icon, display_order=EXCLUDED.display_order`,
-      [c.id, c.name, c.slug, c.icon || '', c.display_order || 0, c.created_at || new Date(), c.updated_at || new Date()]
-    );
-  }
-  await pgPool.query(`SELECT setval('categories_id_seq', (SELECT COALESCE(MAX(id), 1) FROM categories))`);
-
-  for (const p of backup.products) {
-    await pgPool.query(
-      `INSERT INTO products (id, name, category_id, type, short_description, full_description, image_path, additional_images, specifications, brochure_path, sku, brand, badge_text, grade_badge_text, grade_badge_icon, whatsapp_text, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-       ON CONFLICT (id) DO NOTHING`,
-      [p.id, p.name, p.category_id, p.type || '', p.short_description || '', p.full_description || '', p.image_path || '', p.additional_images || '[]', p.specifications || '[]', p.brochure_path || '', p.sku || '', p.brand || '', p.badge_text || '', p.grade_badge_text || '', p.grade_badge_icon || '', p.whatsapp_text || '', p.status || 'draft', p.created_at || new Date(), p.updated_at || new Date()]
-    );
-  }
-  await pgPool.query(`SELECT setval('products_id_seq', (SELECT COALESCE(MAX(id), 1) FROM products))`);
-
-  for (const u of backup.users) {
-    await pgPool.query(
-      `INSERT INTO users (id, username, password_hash, role, created_at)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (id) DO NOTHING`,
-      [u.id, u.username, u.password_hash, u.role || 'admin', u.created_at || new Date()]
-    );
-  }
-  await pgPool.query(`SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 1) FROM users))`);
-  console.log('✅ PostgreSQL seeding completed successfully.');
 }
 
 // ─── SQLite Initialization (local development only) ────────────────────────
@@ -200,57 +156,6 @@ function initSqlite() {
 
 }
 
-function seedSqliteFromBackup() {
-  const backupFile = path.join(__dirname, '..', 'data', 'backup_catalogue.json');
-  if (!fs.existsSync(backupFile)) {
-    console.warn('⚠️  backup_catalogue.json not found — in-memory DB will be empty.');
-    return;
-  }
-
-  try {
-    const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
-
-    const insertCat = sqliteDb.prepare(
-      `INSERT OR IGNORE INTO categories (id, name, slug, icon, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertProd = sqliteDb.prepare(
-      `INSERT OR IGNORE INTO products
-        (id, name, category_id, type, short_description, full_description, image_path,
-         additional_images, specifications, brochure_path, sku, brand, badge_text,
-         grade_badge_text, grade_badge_icon, whatsapp_text, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertUser = sqliteDb.prepare(
-      `INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)`
-    );
-
-    const seedAll = sqliteDb.transaction(() => {
-      for (const c of (backup.categories || [])) {
-        insertCat.run(c.id, c.name, c.slug, c.icon || '', c.display_order || 0, c.created_at || '', c.updated_at || '');
-      }
-      for (const p of (backup.products || [])) {
-        insertProd.run(
-          p.id, p.name, p.category_id, p.type || '', p.short_description || '',
-          p.full_description || '', p.image_path || '', p.additional_images || '[]',
-          p.specifications || '[]', p.brochure_path || '', p.sku || '', p.brand || '',
-          p.badge_text || '', p.grade_badge_text || '', p.grade_badge_icon || '',
-          p.whatsapp_text || '', p.status || 'published', p.created_at || '', p.updated_at || ''
-        );
-      }
-      for (const u of (backup.users || [])) {
-        insertUser.run(u.id, u.username, u.password_hash, u.role || 'admin', u.created_at || '');
-      }
-    });
-
-    seedAll();
-    const catCount = sqliteDb.prepare('SELECT COUNT(*) AS c FROM categories').get();
-    const prodCount = sqliteDb.prepare('SELECT COUNT(*) AS c FROM products').get();
-    console.log(`✅ In-memory SQLite seeded: ${catCount.c} categories, ${prodCount.c} products.`);
-  } catch (seedErr) {
-    console.error('❌ Failed to seed in-memory SQLite from backup:', seedErr.message);
-  }
-}
-
 // ─── Ensure Ready Helper ────────────────────────────────────────────────────
 async function ensureReady() {
   if (isInitialized) return;
@@ -269,7 +174,10 @@ async function ensureReady() {
         console.log('✅ SQLite ready.');
       }
       isInitialized = true;
-    })();
+    })().catch(error => {
+      initPromise = null;
+      throw error;
+    });
   }
   await initPromise;
 }

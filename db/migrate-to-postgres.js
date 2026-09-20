@@ -8,7 +8,7 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 
 // Allow passing connection string as argument or via environment variable
-const dbUrl = process.argv[2] || process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const dbUrl = process.argv[2] || process.env.DATABASE_URL;
 
 if (!dbUrl) {
   console.error('\n❌ Error: Please provide a PostgreSQL connection string.');
@@ -192,6 +192,22 @@ async function migrate() {
     const sourceCounts = [backup.categories.length, backup.products.length, backup.users.length];
     if (counts.some((count, index) => count < sourceCounts[index])) {
       throw new Error(`Verification failed: destination counts ${counts.join('/')} are below source counts ${sourceCounts.join('/')}.`);
+    }
+
+    for (const category of backup.categories) {
+      const result = await client.query('SELECT name, slug, icon, display_order FROM categories WHERE id = $1', [category.id]);
+      const row = result.rows[0];
+      if (!row || row.name !== category.name || row.slug !== category.slug || row.icon !== (category.icon || '') || Number(row.display_order) !== Number(category.display_order || 0)) {
+        throw new Error(`Verification failed for category ID ${category.id}.`);
+      }
+    }
+
+    for (const product of backup.products) {
+      const result = await client.query('SELECT name, category_id, short_description, full_description, image_path, specifications FROM products WHERE id = $1', [product.id]);
+      const row = result.rows[0];
+      if (!row || row.name !== product.name || Number(row.category_id) !== Number(product.category_id) || row.short_description !== (product.short_description || '') || row.full_description !== (product.full_description || '') || row.image_path !== (product.image_path || '') || row.specifications !== (product.specifications || '[]')) {
+        throw new Error(`Verification failed for product ID ${product.id}.`);
+      }
     }
 
     await client.query('COMMIT');
