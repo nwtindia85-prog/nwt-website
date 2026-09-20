@@ -20,7 +20,8 @@ const storage = multer.memoryStorage();
 const fileFilter = (req, file, cb) => {
   const allowed = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg'];
   const ext = path.extname(file.originalname).toLowerCase();
-  if (allowed.includes(ext)) {
+  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
+  if (allowed.includes(ext) && allowedMimeTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
     cb(new Error('Only image files (jpg, jpeg, png, webp, gif, svg) are allowed.'), false);
@@ -351,6 +352,17 @@ router.post('/upload', requireAdmin, upload.single('image'), async (req, res) =>
     console.error('Upload error:', err);
     res.status(500).json({ error: 'Failed to upload image: ' + (err.message || '') });
   }
+});
+
+router.use('/upload', (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'Image is too large. Maximum size is 10 MB.' });
+    }
+    return res.status(400).json({ error: 'Invalid image upload.' });
+  }
+  if (err) return res.status(400).json({ error: err.message || 'Invalid image upload.' });
+  next();
 });
 
 // ─── CATEGORIES: List all ───────────────────────────────────────────────────
