@@ -3,7 +3,9 @@
    North Wide Traders India OPC Private Limited
    ========================================================================== */
 
-const db = require('./database');
+const path = require('path');
+const Database = require('better-sqlite3');
+const db = new Database(path.join(__dirname, '..', 'data', 'catalogue.db'));
 const bcrypt = require('bcryptjs');
 const readline = require('readline');
 

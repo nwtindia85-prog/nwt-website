@@ -1,4 +1,7 @@
-const db = require('./database');
+const path = require('path');
+const Database = require('better-sqlite3');
+
+const db = new Database(path.join(__dirname, '..', 'data', 'catalogue.db'), { readonly: true });
 
 console.log('Tables:');
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();

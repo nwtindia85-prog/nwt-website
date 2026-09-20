@@ -346,7 +346,7 @@
     document.querySelector('.products-table-wrap').style.display = 'block';
 
     productsTableBody.innerHTML = filtered.map(p => {
-      const imgSrc = p.image_path ? (p.image_path.startsWith('/') ? p.image_path : `/${p.image_path}`) : '';
+      const imgSrc = p.image_path ? (p.image_path.startsWith('/') || p.image_path.startsWith('data:') || p.image_path.startsWith('http') ? p.image_path : `/${p.image_path}`) : '';
       const statusClass = `status-${p.status}`;
       const updatedDate = p.updated_at ? new Date(p.updated_at + 'Z').toLocaleDateString() : '—';
       const desc = p.short_description ? p.short_description.substring(0, 80) + (p.short_description.length > 80 ? '...' : '') : '';
@@ -546,7 +546,9 @@
       });
 
       productImagePath.value = data.path;
-      previewImg.src = '/' + data.path;
+      previewImg.src = data.path.startsWith('/') || data.path.startsWith('data:') || data.path.startsWith('http')
+        ? data.path
+        : '/' + data.path;
       imagePreview.style.display = 'block';
       imagePlaceholder.style.display = 'none';
       showToast('Image uploaded successfully!', 'success');

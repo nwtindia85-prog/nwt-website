@@ -94,12 +94,6 @@ async function initPostgres() {
     console.warn('Could not alter image_path type:', alterErr.message);
   }
 
-  // Check if database needs initial seeding from backup
-  const catCountRes = await pgPool.query('SELECT COUNT(*) AS c FROM categories');
-  if (parseInt(catCountRes.rows[0].c, 10) === 0) {
-    console.log('🌱 PostgreSQL empty: seeding from backup_catalogue.json...');
-    await seedFromBackupPg();
-  }
 }
 
 async function seedFromBackupPg() {
@@ -139,15 +133,17 @@ async function seedFromBackupPg() {
   console.log('✅ PostgreSQL seeding completed successfully.');
 }
 
-// ─── SQLite Initialization (Local Fallback) ─────────────────────────────────
+// ─── SQLite Initialization (local development only) ────────────────────────
 function initSqlite() {
   const Database = require('better-sqlite3');
-  const DB_DIR = path.join(__dirname, '..', 'data');
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-  }
-  const DB_PATH = path.join(DB_DIR, 'catalogue.db');
 
+  if (isVercel) {
+    throw new Error('DATABASE_URL is required in Vercel. Configure PostgreSQL before serving API requests.');
+  }
+
+  const DB_DIR = path.join(__dirname, '..', 'data');
+  if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+  const DB_PATH = path.join(DB_DIR, 'catalogue.db');
   sqliteDb = new Database(DB_PATH);
   try {
     sqliteDb.pragma('journal_mode = WAL');
@@ -201,6 +197,58 @@ function initSqlite() {
     CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
     CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug);
   `);
+
+}
+
+function seedSqliteFromBackup() {
+  const backupFile = path.join(__dirname, '..', 'data', 'backup_catalogue.json');
+  if (!fs.existsSync(backupFile)) {
+    console.warn('⚠️  backup_catalogue.json not found — in-memory DB will be empty.');
+    return;
+  }
+
+  try {
+    const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+
+    const insertCat = sqliteDb.prepare(
+      `INSERT OR IGNORE INTO categories (id, name, slug, icon, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    const insertProd = sqliteDb.prepare(
+      `INSERT OR IGNORE INTO products
+        (id, name, category_id, type, short_description, full_description, image_path,
+         additional_images, specifications, brochure_path, sku, brand, badge_text,
+         grade_badge_text, grade_badge_icon, whatsapp_text, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const insertUser = sqliteDb.prepare(
+      `INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)`
+    );
+
+    const seedAll = sqliteDb.transaction(() => {
+      for (const c of (backup.categories || [])) {
+        insertCat.run(c.id, c.name, c.slug, c.icon || '', c.display_order || 0, c.created_at || '', c.updated_at || '');
+      }
+      for (const p of (backup.products || [])) {
+        insertProd.run(
+          p.id, p.name, p.category_id, p.type || '', p.short_description || '',
+          p.full_description || '', p.image_path || '', p.additional_images || '[]',
+          p.specifications || '[]', p.brochure_path || '', p.sku || '', p.brand || '',
+          p.badge_text || '', p.grade_badge_text || '', p.grade_badge_icon || '',
+          p.whatsapp_text || '', p.status || 'published', p.created_at || '', p.updated_at || ''
+        );
+      }
+      for (const u of (backup.users || [])) {
+        insertUser.run(u.id, u.username, u.password_hash, u.role || 'admin', u.created_at || '');
+      }
+    });
+
+    seedAll();
+    const catCount = sqliteDb.prepare('SELECT COUNT(*) AS c FROM categories').get();
+    const prodCount = sqliteDb.prepare('SELECT COUNT(*) AS c FROM products').get();
+    console.log(`✅ In-memory SQLite seeded: ${catCount.c} categories, ${prodCount.c} products.`);
+  } catch (seedErr) {
+    console.error('❌ Failed to seed in-memory SQLite from backup:', seedErr.message);
+  }
 }
 
 // ─── Ensure Ready Helper ────────────────────────────────────────────────────
@@ -213,20 +261,18 @@ async function ensureReady() {
         await initPostgres();
         console.log('✅ Connected to PostgreSQL successfully.');
       } else {
-        console.log('📂 Using SQLite database (local mode)...');
+        if (isVercel) {
+          throw new Error('DATABASE_URL is required in Vercel. Configure PostgreSQL before serving API requests.');
+        }
+        console.log('📂 Using SQLite database...');
         initSqlite();
-        console.log('✅ Connected to SQLite successfully.');
+        console.log('✅ SQLite ready.');
       }
       isInitialized = true;
     })();
   }
   await initPromise;
 }
-
-// Immediately trigger initialization on load
-ensureReady().catch(err => {
-  console.error('Database initialization error:', err);
-});
 
 // ─── Universal Database API ─────────────────────────────────────────────────
 

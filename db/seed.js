@@ -3,7 +3,14 @@
    North Wide Traders India OPC Private Limited
    ========================================================================== */
 
-const db = require('./database');
+const path = require('path');
+const Database = require('better-sqlite3');
+
+if (process.env.DATABASE_URL || process.env.POSTGRES_URL) {
+  throw new Error('db/seed.js is a local development seed script. Use db/migrate-to-postgres.js for PostgreSQL.');
+}
+
+const db = new Database(path.join(__dirname, '..', 'data', 'catalogue.db'));
 
 console.log('🌱 Seeding database with existing catalogue data...\n');
 

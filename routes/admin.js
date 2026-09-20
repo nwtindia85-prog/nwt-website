@@ -311,12 +311,33 @@ router.delete('/products/:id', requireAdmin, async (req, res) => {
 
 // ─── IMAGE UPLOAD ───────────────────────────────────────────────────────────
 
-router.post('/upload', requireAdmin, upload.single('image'), (req, res) => {
+router.post('/upload', requireAdmin, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No image file provided.' });
     }
 
+    if (process.env.VERCEL && !process.env.BLOB_READ_WRITE_TOKEN) {
+      return res.status(503).json({ error: 'Image storage is not configured. Set BLOB_READ_WRITE_TOKEN in Vercel.' });
+    }
+
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      const { put } = require('@vercel/blob');
+      const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, '-');
+      const blob = await put(`products/${Date.now()}-${safeName}`, req.file.buffer, {
+        access: 'public',
+        contentType: req.file.mimetype,
+        addRandomSuffix: true
+      });
+      return res.json({
+        message: 'Image uploaded successfully.',
+        path: blob.url,
+        filename: req.file.originalname,
+        size: req.file.size
+      });
+    }
+
+    // Local development fallback. Production requires persistent Blob storage.
     const base64Image = req.file.buffer.toString('base64');
     const dataUri = `data:${req.file.mimetype};base64,${base64Image}`;
 

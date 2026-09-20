@@ -119,13 +119,16 @@ Example:
 
 ``` env
 PORT=3000
-DATABASE_URL=your_database_connection
-JWT_SECRET=replace_with_a_strong_secret
+DATABASE_URL=your_neon_connection_string
+SESSION_SECRET=replace_with_a_strong_random_secret
 NODE_ENV=development
+BLOB_READ_WRITE_TOKEN=your_vercel_blob_token
 ```
 
-> The variable names above are examples. Use the exact variables
-> referenced by your application code.
+`DATABASE_URL` is required in Vercel. The application uses local
+`data/catalogue.db` only when running outside Vercel and no PostgreSQL URL is
+configured. `BLOB_READ_WRITE_TOKEN` is required for production image uploads;
+local uploads use the existing data-URI fallback.
 
 ### 4. Initialize the database
 
@@ -138,6 +141,40 @@ scripts:
 
 Do not run database initialization scripts in production until you
 understand whether they create, overwrite, or delete records.
+
+### PostgreSQL migration
+
+Create a Neon PostgreSQL project and copy its pooled connection string into
+`DATABASE_URL` locally. The migration is non-destructive: it imports the live
+`data/catalogue.db` when present, otherwise it uses
+`data/backup_catalogue.json`, and preserves existing IDs, products, categories,
+and password hashes.
+
+``` bash
+node db/migrate-to-postgres.js
+```
+
+The command creates the schema inside a transaction and prints source and
+destination counts. It aborts if any destination count is below the source
+count. It does not drop or reset tables. Set `SOURCE_SQLITE_PATH` only when
+the source database is stored somewhere else.
+
+### Vercel configuration
+
+Configure these variable names in both Preview and Production environments:
+
+``` text
+DATABASE_URL
+SESSION_SECRET
+BLOB_READ_WRITE_TOKEN
+NODE_ENV=production
+```
+
+Use Vercel Storage to create a Blob store and copy its read/write token to
+`BLOB_READ_WRITE_TOKEN`. Use a strong unique `SESSION_SECRET`; never commit
+`.env` or print these values in logs. Deploy after the Neon migration, then
+open `/api/categories`, `/api/products`, and `/secure-admin` to verify the
+deployment.
 
 ------------------------------------------------------------------------
 

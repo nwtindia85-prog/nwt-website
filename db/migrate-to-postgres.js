@@ -5,6 +5,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const Database = require('better-sqlite3');
 
 // Allow passing connection string as argument or via environment variable
 const dbUrl = process.argv[2] || process.env.DATABASE_URL || process.env.POSTGRES_URL;
@@ -31,8 +32,9 @@ async function migrate() {
     ssl: dbUrl.includes('localhost') ? false : { rejectUnauthorized: false }
   });
 
+  let client;
   try {
-    const client = await pool.connect();
+    client = await pool.connect();
     console.log('✅ Connected to destination database successfully.\n');
 
     // 1. Create Schema
@@ -55,10 +57,10 @@ async function migrate() {
         type VARCHAR(255) DEFAULT '',
         short_description TEXT DEFAULT '',
         full_description TEXT DEFAULT '',
-        image_path VARCHAR(500) DEFAULT '',
+        image_path TEXT DEFAULT '',
         additional_images TEXT DEFAULT '[]',
         specifications TEXT DEFAULT '[]',
-        brochure_path VARCHAR(500) DEFAULT '',
+        brochure_path TEXT DEFAULT '',
         sku VARCHAR(100) DEFAULT '',
         brand VARCHAR(255) DEFAULT '',
         badge_text VARCHAR(100) DEFAULT '',
@@ -84,12 +86,29 @@ async function migrate() {
     `);
     console.log('✅ Schemas verified.\n');
 
-    // 2. Load Source Data
-    const backupFile = path.join(__dirname, '..', 'data', 'backup_catalogue.json');
-    if (!fs.existsSync(backupFile)) {
-      throw new Error(`Backup file not found at: ${backupFile}`);
+    await client.query('BEGIN');
+
+    // 2. Load the live local SQLite database. JSON remains a safe fallback for
+    // repositories that do not have the ignored catalogue.db file.
+    const sourcePath = process.env.SOURCE_SQLITE_PATH || path.join(__dirname, '..', 'data', 'catalogue.db');
+    let sourceDb = null;
+    let backup;
+    if (fs.existsSync(sourcePath)) {
+      sourceDb = new Database(sourcePath, { readonly: true });
+      backup = {
+        categories: sourceDb.prepare('SELECT * FROM categories ORDER BY id').all(),
+        products: sourceDb.prepare('SELECT * FROM products ORDER BY id').all(),
+        users: sourceDb.prepare('SELECT * FROM users ORDER BY id').all()
+      };
+      console.log(`📂 Source SQLite: ${sourcePath}`);
+    } else {
+      const backupFile = path.join(__dirname, '..', 'data', 'backup_catalogue.json');
+      if (!fs.existsSync(backupFile)) throw new Error(`Source database not found at: ${sourcePath}`);
+      backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+      console.log(`📄 Source backup: ${backupFile}`);
     }
-    const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+    console.log(`   Source counts: ${backup.categories.length} categories, ${backup.products.length} products, ${backup.users.length} users`);
+    if (sourceDb) sourceDb.close();
 
     // 3. Migrate Categories
     console.log(`📦 Migrating ${backup.categories.length} categories...`);
@@ -169,6 +188,13 @@ async function migrate() {
     const catCheck = await client.query('SELECT COUNT(*) AS count FROM categories');
     const prodCheck = await client.query('SELECT COUNT(*) AS count FROM products');
     const userCheck = await client.query('SELECT COUNT(*) AS count FROM users');
+    const counts = [catCheck.rows[0].count, prodCheck.rows[0].count, userCheck.rows[0].count].map(Number);
+    const sourceCounts = [backup.categories.length, backup.products.length, backup.users.length];
+    if (counts.some((count, index) => count < sourceCounts[index])) {
+      throw new Error(`Verification failed: destination counts ${counts.join('/')} are below source counts ${sourceCounts.join('/')}.`);
+    }
+
+    await client.query('COMMIT');
 
     console.log('════════════════════════════════════════════════════════');
     console.log('🎉 MIGRATION COMPLETE & VERIFIED:');
@@ -180,6 +206,9 @@ async function migrate() {
     client.release();
     await pool.end();
   } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    if (client) client.release();
+    await pool.end();
     console.error('❌ Migration failed:', err);
     process.exit(1);
   }
