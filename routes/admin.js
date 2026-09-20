@@ -15,27 +15,7 @@ const { requireAdmin, generateToken, setAuthCookie, clearAuthCookie } = require(
 
 // ─── Multer Config for Image Uploads ────────────────────────────────────────
 
-const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-const LOCAL_UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'products');
-const UPLOAD_DIR = isVercel ? path.join(os.tmpdir(), 'uploads', 'products') : LOCAL_UPLOAD_DIR;
-
-// Ensure upload directory exists safely
-try {
-  if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  }
-} catch (dirErr) {
-  console.warn('Could not create upload directory:', dirErr.message);
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const uniquePrefix = Date.now() + '-' + Math.round(Math.random() * 1e6);
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, uniquePrefix + ext);
-  }
-});
+const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
   const allowed = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg'];
@@ -63,7 +43,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required.' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE username = ? AND role = ?').get(username, 'admin');
+    const user = await db.queryOne('SELECT * FROM users WHERE username = ? AND role = ?', [username, 'admin']);
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid username or password.' });
@@ -94,7 +74,7 @@ router.post('/login', async (req, res) => {
     });
   } catch (err) {
     console.error('Login error:', err);
-    res.status(500).json({ error: 'Internal server error.' });
+    res.status(500).json({ error: 'Internal server error: ' + (err.message || '') });
   }
 });
 
@@ -125,56 +105,56 @@ router.get('/session', (req, res) => {
 
 // ─── STATS: Dashboard overview ──────────────────────────────────────────────
 
-router.get('/stats', requireAdmin, (req, res) => {
+router.get('/stats', requireAdmin, async (req, res) => {
   try {
-    const totalProducts = db.prepare('SELECT COUNT(*) AS count FROM products').get().count;
-    const publishedProducts = db.prepare("SELECT COUNT(*) AS count FROM products WHERE status = 'published'").get().count;
-    const draftProducts = db.prepare("SELECT COUNT(*) AS count FROM products WHERE status = 'draft'").get().count;
-    const unpublishedProducts = db.prepare("SELECT COUNT(*) AS count FROM products WHERE status = 'unpublished'").get().count;
-    const totalCategories = db.prepare('SELECT COUNT(*) AS count FROM categories').get().count;
+    const totalRow = await db.queryOne('SELECT COUNT(*) AS count FROM products');
+    const pubRow = await db.queryOne("SELECT COUNT(*) AS count FROM products WHERE status = 'published'");
+    const draftRow = await db.queryOne("SELECT COUNT(*) AS count FROM products WHERE status = 'draft'");
+    const unpubRow = await db.queryOne("SELECT COUNT(*) AS count FROM products WHERE status = 'unpublished'");
+    const catRow = await db.queryOne('SELECT COUNT(*) AS count FROM categories');
 
     res.json({
-      totalProducts,
-      publishedProducts,
-      draftProducts,
-      unpublishedProducts,
-      totalCategories
+      totalProducts: parseInt(totalRow ? totalRow.count : 0, 10),
+      publishedProducts: parseInt(pubRow ? pubRow.count : 0, 10),
+      draftProducts: parseInt(draftRow ? draftRow.count : 0, 10),
+      unpublishedProducts: parseInt(unpubRow ? unpubRow.count : 0, 10),
+      totalCategories: parseInt(catRow ? catRow.count : 0, 10)
     });
   } catch (err) {
     console.error('Stats error:', err);
-    res.status(500).json({ error: 'Failed to fetch stats.' });
+    res.status(500).json({ error: 'Failed to fetch stats: ' + (err.message || '') });
   }
 });
 
 // ─── PRODUCTS: List all (including drafts) ──────────────────────────────────
 
-router.get('/products', requireAdmin, (req, res) => {
+router.get('/products', requireAdmin, async (req, res) => {
   try {
-    const products = db.prepare(`
+    const products = await db.query(`
       SELECT 
         p.*, c.name AS category_name, c.slug AS category_slug
       FROM products p
       JOIN categories c ON p.category_id = c.id
-      ORDER BY p.updated_at DESC
-    `).all();
+      ORDER BY p.updated_at DESC, p.id DESC
+    `);
 
     res.json(products);
   } catch (err) {
     console.error('Error fetching admin products:', err);
-    res.status(500).json({ error: 'Failed to fetch products.' });
+    res.status(500).json({ error: 'Failed to fetch products: ' + (err.message || '') });
   }
 });
 
 // ─── PRODUCTS: Get single ───────────────────────────────────────────────────
 
-router.get('/products/:id', requireAdmin, (req, res) => {
+router.get('/products/:id', requireAdmin, async (req, res) => {
   try {
-    const product = db.prepare(`
+    const product = await db.queryOne(`
       SELECT p.*, c.name AS category_name, c.slug AS category_slug
       FROM products p
       JOIN categories c ON p.category_id = c.id
       WHERE p.id = ?
-    `).get(req.params.id);
+    `, [req.params.id]);
 
     if (!product) {
       return res.status(404).json({ error: 'Product not found.' });
@@ -183,13 +163,13 @@ router.get('/products/:id', requireAdmin, (req, res) => {
     res.json(product);
   } catch (err) {
     console.error('Error fetching product:', err);
-    res.status(500).json({ error: 'Failed to fetch product.' });
+    res.status(500).json({ error: 'Failed to fetch product: ' + (err.message || '') });
   }
 });
 
 // ─── PRODUCTS: Create ───────────────────────────────────────────────────────
 
-router.post('/products', requireAdmin, (req, res) => {
+router.post('/products', requireAdmin, async (req, res) => {
   try {
     const {
       name, category_id, type, short_description, full_description,
@@ -203,43 +183,43 @@ router.post('/products', requireAdmin, (req, res) => {
     }
 
     // Validate category exists
-    const cat = db.prepare('SELECT id FROM categories WHERE id = ?').get(category_id);
+    const cat = await db.queryOne('SELECT id FROM categories WHERE id = ?', [category_id]);
     if (!cat) {
       return res.status(400).json({ error: 'Invalid category.' });
     }
 
-    const result = db.prepare(`
+    const result = await db.execute(`
       INSERT INTO products 
         (name, category_id, type, short_description, full_description, image_path,
          additional_images, specifications, brochure_path, sku, brand,
          badge_text, grade_badge_text, grade_badge_icon, whatsapp_text, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       name, category_id, type || '', short_description || '', full_description || '',
       image_path || '', additional_images || '[]', specifications || '[]',
       brochure_path || '', sku || '', brand || '', badge_text || '',
       grade_badge_text || '', grade_badge_icon || '', whatsapp_text || '',
       status || 'draft'
-    );
+    ]);
 
-    const newProduct = db.prepare(`
+    const newProduct = await db.queryOne(`
       SELECT p.*, c.name AS category_name, c.slug AS category_slug
       FROM products p JOIN categories c ON p.category_id = c.id
       WHERE p.id = ?
-    `).get(result.lastInsertRowid);
+    `, [result.lastInsertRowid]);
 
     res.status(201).json(newProduct);
   } catch (err) {
     console.error('Error creating product:', err);
-    res.status(500).json({ error: 'Failed to create product.' });
+    res.status(500).json({ error: 'Failed to create product: ' + (err.message || '') });
   }
 });
 
 // ─── PRODUCTS: Update ───────────────────────────────────────────────────────
 
-router.put('/products/:id', requireAdmin, (req, res) => {
+router.put('/products/:id', requireAdmin, async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id);
+    const existing = await db.queryOne('SELECT * FROM products WHERE id = ?', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Product not found.' });
     }
@@ -253,20 +233,20 @@ router.put('/products/:id', requireAdmin, (req, res) => {
 
     // Validate category if provided
     if (category_id) {
-      const cat = db.prepare('SELECT id FROM categories WHERE id = ?').get(category_id);
+      const cat = await db.queryOne('SELECT id FROM categories WHERE id = ?', [category_id]);
       if (!cat) {
         return res.status(400).json({ error: 'Invalid category.' });
       }
     }
 
-    db.prepare(`
+    await db.execute(`
       UPDATE products SET
         name = ?, category_id = ?, type = ?, short_description = ?, full_description = ?,
         image_path = ?, additional_images = ?, specifications = ?, brochure_path = ?,
         sku = ?, brand = ?, badge_text = ?, grade_badge_text = ?, grade_badge_icon = ?,
         whatsapp_text = ?, status = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(
+    `, [
       name || existing.name,
       category_id || existing.category_id,
       type !== undefined ? type : existing.type,
@@ -284,33 +264,33 @@ router.put('/products/:id', requireAdmin, (req, res) => {
       whatsapp_text !== undefined ? whatsapp_text : existing.whatsapp_text,
       status || existing.status,
       req.params.id
-    );
+    ]);
 
-    const updated = db.prepare(`
+    const updated = await db.queryOne(`
       SELECT p.*, c.name AS category_name, c.slug AS category_slug
       FROM products p JOIN categories c ON p.category_id = c.id
       WHERE p.id = ?
-    `).get(req.params.id);
+    `, [req.params.id]);
 
     res.json(updated);
   } catch (err) {
     console.error('Error updating product:', err);
-    res.status(500).json({ error: 'Failed to update product.' });
+    res.status(500).json({ error: 'Failed to update product: ' + (err.message || '') });
   }
 });
 
 // ─── PRODUCTS: Delete ───────────────────────────────────────────────────────
 
-router.delete('/products/:id', requireAdmin, (req, res) => {
+router.delete('/products/:id', requireAdmin, async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id);
+    const existing = await db.queryOne('SELECT * FROM products WHERE id = ?', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Product not found.' });
     }
 
-    db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
+    await db.execute('DELETE FROM products WHERE id = ?', [req.params.id]);
 
-    // Clean up uploaded image if it's in the uploads folder
+    // Clean up uploaded image if it's in the uploads folder (safely ignoring read-only fs)
     if (existing.image_path && existing.image_path.startsWith('uploads/')) {
       try {
         const fullPath = path.join(__dirname, '..', existing.image_path);
@@ -318,14 +298,14 @@ router.delete('/products/:id', requireAdmin, (req, res) => {
           fs.unlinkSync(fullPath);
         }
       } catch (unlinkErr) {
-        console.warn('Could not unlink image file:', unlinkErr.message);
+        // Safe to ignore on serverless read-only filesystems
       }
     }
 
     res.json({ message: 'Product deleted successfully.' });
   } catch (err) {
     console.error('Error deleting product:', err);
-    res.status(500).json({ error: 'Failed to delete product.' });
+    res.status(500).json({ error: 'Failed to delete product: ' + (err.message || '') });
   }
 });
 
@@ -337,103 +317,112 @@ router.post('/upload', requireAdmin, upload.single('image'), (req, res) => {
       return res.status(400).json({ error: 'No image file provided.' });
     }
 
-    const relativePath = 'uploads/products/' + req.file.filename;
+    const base64Image = req.file.buffer.toString('base64');
+    const dataUri = `data:${req.file.mimetype};base64,${base64Image}`;
 
     res.json({
       message: 'Image uploaded successfully.',
-      path: relativePath,
-      filename: req.file.filename,
+      path: dataUri,
+      filename: req.file.originalname,
       size: req.file.size
     });
   } catch (err) {
     console.error('Upload error:', err);
-    res.status(500).json({ error: 'Failed to upload image.' });
+    res.status(500).json({ error: 'Failed to upload image: ' + (err.message || '') });
   }
 });
 
 // ─── CATEGORIES: List all ───────────────────────────────────────────────────
 
-router.get('/categories', requireAdmin, (req, res) => {
+router.get('/categories', requireAdmin, async (req, res) => {
   try {
-    const categories = db.prepare(`
+    const categories = await db.query(`
       SELECT c.*, COUNT(p.id) AS product_count
       FROM categories c
       LEFT JOIN products p ON c.id = p.category_id
-      GROUP BY c.id
-      ORDER BY c.display_order ASC
-    `).all();
+      GROUP BY c.id, c.name, c.slug, c.icon, c.display_order, c.created_at, c.updated_at
+      ORDER BY c.display_order ASC, c.name ASC
+    `);
 
-    res.json(categories);
+    const normalized = categories.map(cat => ({
+      ...cat,
+      product_count: parseInt(cat.product_count || 0, 10)
+    }));
+
+    res.json(normalized);
   } catch (err) {
     console.error('Error fetching categories:', err);
-    res.status(500).json({ error: 'Failed to fetch categories.' });
+    res.status(500).json({ error: 'Failed to fetch categories: ' + (err.message || '') });
   }
 });
 
 // ─── CATEGORIES: Create ─────────────────────────────────────────────────────
 
-router.post('/categories', requireAdmin, (req, res) => {
+router.post('/categories', requireAdmin, async (req, res) => {
   try {
     const { name, slug, icon, display_order } = req.body;
     if (!name || !slug) {
       return res.status(400).json({ error: 'Category name and slug are required.' });
     }
 
-    const result = db.prepare(
-      'INSERT INTO categories (name, slug, icon, display_order) VALUES (?, ?, ?, ?)'
-    ).run(name, slug, icon || '', display_order || 0);
+    const result = await db.execute(
+      'INSERT INTO categories (name, slug, icon, display_order) VALUES (?, ?, ?, ?)',
+      [name, slug, icon || '', display_order || 0]
+    );
 
-    const newCat = db.prepare('SELECT * FROM categories WHERE id = ?').get(result.lastInsertRowid);
+    const newCat = await db.queryOne('SELECT * FROM categories WHERE id = ?', [result.lastInsertRowid]);
     res.status(201).json(newCat);
   } catch (err) {
-    if (err.message && err.message.includes('UNIQUE')) {
+    if (err.message && (err.message.includes('UNIQUE') || err.message.includes('unique'))) {
       return res.status(409).json({ error: 'Category name or slug already exists.' });
     }
     console.error('Error creating category:', err);
-    res.status(500).json({ error: 'Failed to create category.' });
+    res.status(500).json({ error: 'Failed to create category: ' + (err.message || '') });
   }
 });
 
 // ─── CATEGORIES: Update ─────────────────────────────────────────────────────
 
-router.put('/categories/:id', requireAdmin, (req, res) => {
+router.put('/categories/:id', requireAdmin, async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
+    const existing = await db.queryOne('SELECT * FROM categories WHERE id = ?', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Category not found.' });
     }
 
     const { name, slug, icon, display_order } = req.body;
 
-    db.prepare(`
+    await db.execute(`
       UPDATE categories SET name = ?, slug = ?, icon = ?, display_order = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(
+    `, [
       name || existing.name,
       slug || existing.slug,
       icon !== undefined ? icon : existing.icon,
       display_order !== undefined ? display_order : existing.display_order,
       req.params.id
-    );
+    ]);
 
-    const updated = db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
+    const updated = await db.queryOne('SELECT * FROM categories WHERE id = ?', [req.params.id]);
     res.json(updated);
   } catch (err) {
-    if (err.message && err.message.includes('UNIQUE')) {
+    if (err.message && (err.message.includes('UNIQUE') || err.message.includes('unique'))) {
       return res.status(409).json({ error: 'A category with this name or slug already exists.' });
     }
     console.error('Error updating category:', err);
-    res.status(500).json({ error: 'Failed to update category.' });
+    res.status(500).json({ error: 'Failed to update category: ' + (err.message || '') });
   }
 });
 
 // ─── CATEGORIES: Delete ─────────────────────────────────────────────────────
 
-router.delete('/categories/:id', requireAdmin, (req, res) => {
+router.delete('/categories/:id', requireAdmin, async (req, res) => {
   try {
-    const productCount = db.prepare(
-      'SELECT COUNT(*) AS count FROM products WHERE category_id = ?'
-    ).get(req.params.id).count;
+    const countRow = await db.queryOne(
+      'SELECT COUNT(*) AS count FROM products WHERE category_id = ?',
+      [req.params.id]
+    );
+    const productCount = parseInt(countRow ? countRow.count : 0, 10);
 
     if (productCount > 0) {
       return res.status(409).json({
@@ -441,11 +430,11 @@ router.delete('/categories/:id', requireAdmin, (req, res) => {
       });
     }
 
-    db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
+    await db.execute('DELETE FROM categories WHERE id = ?', [req.params.id]);
     res.json({ message: 'Category deleted successfully.' });
   } catch (err) {
     console.error('Error deleting category:', err);
-    res.status(500).json({ error: 'Failed to delete category.' });
+    res.status(500).json({ error: 'Failed to delete category: ' + (err.message || '') });
   }
 });
 
@@ -463,19 +452,23 @@ router.put('/change-password', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'New password must be at least 6 characters.' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
+    const user = await db.queryOne('SELECT * FROM users WHERE id = ?', [req.session.userId]);
+    if (!user) {
+      return res.status(404).json({ error: 'Admin account not found.' });
+    }
+
     const valid = await bcrypt.compare(currentPassword, user.password_hash);
     if (!valid) {
       return res.status(401).json({ error: 'Current password is incorrect.' });
     }
 
     const hash = await bcrypt.hash(newPassword, 12);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.session.userId);
+    await db.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.session.userId]);
 
     res.json({ message: 'Password changed successfully.' });
   } catch (err) {
     console.error('Error changing password:', err);
-    res.status(500).json({ error: 'Failed to change password.' });
+    res.status(500).json({ error: 'Failed to change password: ' + (err.message || '') });
   }
 });
 

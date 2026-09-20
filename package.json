@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "setup": "node db/setup-admin.js",
-    "seed": "node db/seed.js"
+    "seed": "node db/seed.js",
+    "db:export": "node db/backup.js",
+    "db:migrate-pg": "node db/migrate-to-postgres.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -15,7 +17,8 @@
     "express": "^4.21.1",
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.23.0"
   },
   "private": true
 }

@@ -1,137 +1,316 @@
 /* ==========================================================================
-   DATABASE — SQLite initialization, schema, and helpers
+   DATABASE ADAPTER — Dual Driver (PostgreSQL in Prod / SQLite Local Fallback)
    North Wide Traders India OPC Private Limited
    ========================================================================== */
 
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 
+const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const usePostgres = Boolean(DATABASE_URL);
 
-let DB_PATH;
-const SOURCE_DB_PATH = path.join(__dirname, '..', 'data', 'catalogue.db');
+let pgPool = null;
+let sqliteDb = null;
+let isInitialized = false;
+let initPromise = null;
 
-if (isVercel) {
-  // In Vercel serverless environment, the application root (/var/task) is read-only.
-  // os.tmpdir() (/tmp in Lambda) is writable. Copy catalogue.db if not already present.
-  const TMP_DIR = os.tmpdir();
-  const TMP_DB_PATH = path.join(TMP_DIR, 'catalogue.db');
+// ─── SQL Dialect Normalizer ─────────────────────────────────────────────────
+function normalizeQuery(sql, isPg) {
+  if (!isPg) return sql;
+  let paramIndex = 1;
+  let out = sql.replace(/\?/g, () => `$${paramIndex++}`);
+  out = out.replace(/datetime\('now'\)/gi, 'CURRENT_TIMESTAMP');
+  return out;
+}
 
-  if (!fs.existsSync(TMP_DB_PATH) && fs.existsSync(SOURCE_DB_PATH)) {
-    try {
-      fs.copyFileSync(SOURCE_DB_PATH, TMP_DB_PATH);
-    } catch (copyErr) {
-      console.warn('Could not copy database to /tmp, falling back to read-only source:', copyErr.message);
-    }
+// ─── PostgreSQL Initialization ──────────────────────────────────────────────
+async function initPostgres() {
+  const { Pool } = require('pg');
+  const poolConfig = {
+    connectionString: DATABASE_URL,
+    ssl: DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false },
+    max: isVercel ? 5 : 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000
+  };
+
+  pgPool = new Pool(poolConfig);
+  pgPool.on('error', (err) => {
+    console.error('Unexpected error on idle PostgreSQL client:', err.message);
+  });
+
+  // Create tables if not present
+  await pgPool.query(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL UNIQUE,
+      slug VARCHAR(255) NOT NULL UNIQUE,
+      icon VARCHAR(255) DEFAULT '',
+      display_order INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+      type VARCHAR(255) DEFAULT '',
+      short_description TEXT DEFAULT '',
+      full_description TEXT DEFAULT '',
+      image_path VARCHAR(500) DEFAULT '',
+      additional_images TEXT DEFAULT '[]',
+      specifications TEXT DEFAULT '[]',
+      brochure_path VARCHAR(500) DEFAULT '',
+      sku VARCHAR(100) DEFAULT '',
+      brand VARCHAR(255) DEFAULT '',
+      badge_text VARCHAR(100) DEFAULT '',
+      grade_badge_text VARCHAR(100) DEFAULT '',
+      grade_badge_icon VARCHAR(100) DEFAULT '',
+      whatsapp_text TEXT DEFAULT '',
+      status VARCHAR(50) DEFAULT 'draft',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(100) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      role VARCHAR(50) NOT NULL DEFAULT 'admin',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
+    CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
+    CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug);
+  `);
+
+  // Ensure image_path can store large Base64 strings in Postgres
+  try {
+    await pgPool.query('ALTER TABLE products ALTER COLUMN image_path TYPE TEXT;');
+  } catch (alterErr) {
+    console.warn('Could not alter image_path type:', alterErr.message);
   }
 
-  DB_PATH = fs.existsSync(TMP_DB_PATH) ? TMP_DB_PATH : SOURCE_DB_PATH;
-} else {
+  // Check if database needs initial seeding from backup
+  const catCountRes = await pgPool.query('SELECT COUNT(*) AS c FROM categories');
+  if (parseInt(catCountRes.rows[0].c, 10) === 0) {
+    console.log('🌱 PostgreSQL empty: seeding from backup_catalogue.json...');
+    await seedFromBackupPg();
+  }
+}
+
+async function seedFromBackupPg() {
+  const backupFile = path.join(__dirname, '..', 'data', 'backup_catalogue.json');
+  if (!fs.existsSync(backupFile)) return;
+  const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+
+  for (const c of backup.categories) {
+    await pgPool.query(
+      `INSERT INTO categories (id, name, slug, icon, display_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, slug=EXCLUDED.slug, icon=EXCLUDED.icon, display_order=EXCLUDED.display_order`,
+      [c.id, c.name, c.slug, c.icon || '', c.display_order || 0, c.created_at || new Date(), c.updated_at || new Date()]
+    );
+  }
+  await pgPool.query(`SELECT setval('categories_id_seq', (SELECT COALESCE(MAX(id), 1) FROM categories))`);
+
+  for (const p of backup.products) {
+    await pgPool.query(
+      `INSERT INTO products (id, name, category_id, type, short_description, full_description, image_path, additional_images, specifications, brochure_path, sku, brand, badge_text, grade_badge_text, grade_badge_icon, whatsapp_text, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+       ON CONFLICT (id) DO NOTHING`,
+      [p.id, p.name, p.category_id, p.type || '', p.short_description || '', p.full_description || '', p.image_path || '', p.additional_images || '[]', p.specifications || '[]', p.brochure_path || '', p.sku || '', p.brand || '', p.badge_text || '', p.grade_badge_text || '', p.grade_badge_icon || '', p.whatsapp_text || '', p.status || 'draft', p.created_at || new Date(), p.updated_at || new Date()]
+    );
+  }
+  await pgPool.query(`SELECT setval('products_id_seq', (SELECT COALESCE(MAX(id), 1) FROM products))`);
+
+  for (const u of backup.users) {
+    await pgPool.query(
+      `INSERT INTO users (id, username, password_hash, role, created_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO NOTHING`,
+      [u.id, u.username, u.password_hash, u.role || 'admin', u.created_at || new Date()]
+    );
+  }
+  await pgPool.query(`SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 1) FROM users))`);
+  console.log('✅ PostgreSQL seeding completed successfully.');
+}
+
+// ─── SQLite Initialization (Local Fallback) ─────────────────────────────────
+function initSqlite() {
+  const Database = require('better-sqlite3');
   const DB_DIR = path.join(__dirname, '..', 'data');
   if (!fs.existsSync(DB_DIR)) {
     fs.mkdirSync(DB_DIR, { recursive: true });
   }
-  DB_PATH = path.join(DB_DIR, 'catalogue.db');
-}
+  const DB_PATH = path.join(DB_DIR, 'catalogue.db');
 
-let isReadOnly = false;
-let db;
-
-try {
-  db = new Database(DB_PATH);
-} catch (err) {
-  if (isVercel) {
-    console.warn('Opening database in read-only mode:', err.message);
-    db = new Database(SOURCE_DB_PATH, { readonly: true, fileMustExist: true });
-    isReadOnly = true;
-  } else {
-    throw err;
-  }
-}
-
-// ─── Pragmas & Performance ──────────────────────────────────────────────────
-try {
-  if (!isReadOnly) {
-    if (isVercel) {
-      // In serverless /tmp, use MEMORY journal to avoid -shm / -wal file lock issues
-      db.pragma('journal_mode = MEMORY');
-    } else {
-      // WAL mode for better concurrent read performance on persistent storage
-      db.pragma('journal_mode = WAL');
-    }
-    db.pragma('foreign_keys = ON');
-    db.pragma('busy_timeout = 5000');
-  } else {
-    db.pragma('query_only = ON');
-    db.pragma('foreign_keys = ON');
-  }
-} catch (pragmaErr) {
-  console.warn('Pragma configuration notice:', pragmaErr.message);
-}
-
-// ─── Schema Creation (only if writable) ────────────────────────────────────
-if (!isReadOnly) {
+  sqliteDb = new Database(DB_PATH);
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        slug TEXT NOT NULL UNIQUE,
-        icon TEXT DEFAULT '',
-        display_order INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        category_id INTEGER NOT NULL,
-        type TEXT DEFAULT '',
-        short_description TEXT DEFAULT '',
-        full_description TEXT DEFAULT '',
-        image_path TEXT DEFAULT '',
-        additional_images TEXT DEFAULT '[]',
-        specifications TEXT DEFAULT '[]',
-        brochure_path TEXT DEFAULT '',
-        sku TEXT DEFAULT '',
-        brand TEXT DEFAULT '',
-        badge_text TEXT DEFAULT '',
-        grade_badge_text TEXT DEFAULT '',
-        grade_badge_icon TEXT DEFAULT '',
-        whatsapp_text TEXT DEFAULT '',
-        status TEXT DEFAULT 'draft' CHECK(status IN ('draft', 'published', 'unpublished')),
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
-      );
-
-      CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin')),
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
-      CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
-      CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug);
-    `);
-  } catch (schemaErr) {
-    console.warn('Schema check warning:', schemaErr.message);
-  }
-}
-
-// Graceful cleanup to avoid RemoveEnvironmentCleanupHook assertion failures
-process.on('beforeExit', () => {
-  try {
-    if (db && db.open) {
-      db.close();
-    }
+    sqliteDb.pragma('journal_mode = WAL');
+    sqliteDb.pragma('foreign_keys = ON');
+    sqliteDb.pragma('busy_timeout = 5000');
   } catch (_) {}
+
+  sqliteDb.exec(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL UNIQUE,
+      icon TEXT DEFAULT '',
+      display_order INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      category_id INTEGER NOT NULL,
+      type TEXT DEFAULT '',
+      short_description TEXT DEFAULT '',
+      full_description TEXT DEFAULT '',
+      image_path TEXT DEFAULT '',
+      additional_images TEXT DEFAULT '[]',
+      specifications TEXT DEFAULT '[]',
+      brochure_path TEXT DEFAULT '',
+      sku TEXT DEFAULT '',
+      brand TEXT DEFAULT '',
+      badge_text TEXT DEFAULT '',
+      grade_badge_text TEXT DEFAULT '',
+      grade_badge_icon TEXT DEFAULT '',
+      whatsapp_text TEXT DEFAULT '',
+      status TEXT DEFAULT 'draft' CHECK(status IN ('draft', 'published', 'unpublished')),
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin')),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
+    CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
+    CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug);
+  `);
+}
+
+// ─── Ensure Ready Helper ────────────────────────────────────────────────────
+async function ensureReady() {
+  if (isInitialized) return;
+  if (!initPromise) {
+    initPromise = (async () => {
+      if (usePostgres) {
+        console.log('🔌 Connecting to PostgreSQL database...');
+        await initPostgres();
+        console.log('✅ Connected to PostgreSQL successfully.');
+      } else {
+        console.log('📂 Using SQLite database (local mode)...');
+        initSqlite();
+        console.log('✅ Connected to SQLite successfully.');
+      }
+      isInitialized = true;
+    })();
+  }
+  await initPromise;
+}
+
+// Immediately trigger initialization on load
+ensureReady().catch(err => {
+  console.error('Database initialization error:', err);
 });
 
-module.exports = db;
+// ─── Universal Database API ─────────────────────────────────────────────────
+
+/**
+ * Execute a query returning multiple rows.
+ */
+async function query(sql, params = []) {
+  await ensureReady();
+  if (usePostgres) {
+    const pgSql = normalizeQuery(sql, true);
+    const res = await pgPool.query(pgSql, params);
+    return res.rows;
+  } else {
+    const stmt = sqliteDb.prepare(sql);
+    return stmt.all(params);
+  }
+}
+
+/**
+ * Execute a query returning a single row (or null).
+ */
+async function queryOne(sql, params = []) {
+  await ensureReady();
+  if (usePostgres) {
+    const pgSql = normalizeQuery(sql, true);
+    const res = await pgPool.query(pgSql, params);
+    return res.rows.length > 0 ? res.rows[0] : null;
+  } else {
+    const stmt = sqliteDb.prepare(sql);
+    const row = stmt.get(params);
+    return row || null;
+  }
+}
+
+/**
+ * Execute an INSERT / UPDATE / DELETE statement.
+ * Returns { lastInsertRowid, changes }.
+ */
+async function execute(sql, params = []) {
+  await ensureReady();
+  if (usePostgres) {
+    let pgSql = normalizeQuery(sql, true);
+    const isInsert = /^\s*INSERT\s+/i.test(pgSql);
+    if (isInsert && !/RETURNING\s+/i.test(pgSql)) {
+      pgSql += ' RETURNING id';
+    }
+    const res = await pgPool.query(pgSql, params);
+    const lastId = res.rows.length > 0 && res.rows[0].id ? res.rows[0].id : null;
+    return {
+      lastInsertRowid: lastId,
+      changes: res.rowCount
+    };
+  } else {
+    const stmt = sqliteDb.prepare(sql);
+    const info = stmt.run(params);
+    return {
+      lastInsertRowid: info.lastInsertRowid,
+      changes: info.changes
+    };
+  }
+}
+
+/**
+ * Graceful close for process termination or testing.
+ */
+async function close() {
+  if (usePostgres && pgPool) {
+    await pgPool.end();
+    pgPool = null;
+    isInitialized = false;
+    initPromise = null;
+  } else if (sqliteDb && sqliteDb.open) {
+    sqliteDb.close();
+    sqliteDb = null;
+    isInitialized = false;
+    initPromise = null;
+  }
+}
+
+module.exports = {
+  query,
+  queryOne,
+  execute,
+  close,
+  ensureReady,
+  isPostgres: () => usePostgres
+};

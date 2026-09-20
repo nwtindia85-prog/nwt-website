@@ -126,11 +126,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // 8. PRODUCT CATALOG — DYNAMIC LOADING FROM API (For products.html)
   const catalogGrid = document.getElementById('catalogGrid');
   const productSearch = document.getElementById('productSearch');
-  const filterPills = document.querySelectorAll('.filter-pill');
+  const filterPillsContainer = document.querySelector('.filter-pills');
   const noMatchBox = document.getElementById('noMatchBox');
 
   if (catalogGrid && catalogGrid.closest('.products-grid')) {
     let allProducts = [];
+    let allCategories = [];
     let currentCategory = 'all';
     let searchQuery = '';
 
@@ -139,21 +140,57 @@ document.addEventListener('DOMContentLoaded', () => {
     const catParam = urlParams.get('cat');
     if (catParam) {
       currentCategory = catParam;
-      filterPills.forEach(pill => {
-        if (pill.dataset.category === catParam) {
-          pill.classList.add('active');
-        } else {
-          pill.classList.remove('active');
+    }
+
+    // Helper: fetch with retry and timeout
+    async function fetchWithRetry(url, options = {}, retries = 3, timeout = 8000) {
+      for (let i = 0; i < retries; i++) {
+        try {
+          const controller = new AbortController();
+          const id = setTimeout(() => controller.abort(), timeout);
+          const res = await fetch(url, { ...options, signal: controller.signal });
+          clearTimeout(id);
+          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+          return await res.json();
+        } catch (err) {
+          if (i === retries - 1) throw err;
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // Exponential backoff
         }
-      });
+      }
+    }
+
+    // Fetch categories and render filter pills
+    async function loadCategoriesFromAPI() {
+      try {
+        allCategories = await fetchWithRetry('/api/categories');
+        renderFilterPills();
+      } catch (err) {
+        console.error('Error loading categories:', err);
+        // Fallback to static if API fails, but we already have static ones in HTML
+        // For dynamic ones we might just leave the ones currently in HTML if it fails
+      }
+    }
+
+    function renderFilterPills() {
+      if (!filterPillsContainer || allCategories.length === 0) return;
+      
+      const allActive = currentCategory === 'all' ? 'active' : '';
+      let html = `<button class="filter-pill ${allActive}" data-category="all">All Products (${allProducts.length})</button>`;
+      
+      html += allCategories.map(c => {
+        const isActive = currentCategory === c.slug ? 'active' : '';
+        const icon = c.icon || 'fas fa-tag';
+        return `<button class="filter-pill ${isActive}" data-category="${escapeAttr(c.slug)}"><i class="${escapeAttr(icon)}"></i> ${escapeHtml(c.name)}</button>`;
+      }).join('');
+      
+      filterPillsContainer.innerHTML = html;
+      attachFilterPillEvents();
     }
 
     // Fetch products from public API
     async function loadProductsFromAPI() {
       try {
-        const res = await fetch('/api/products');
-        if (!res.ok) throw new Error('Failed to fetch products');
-        allProducts = await res.json();
+        allProducts = await fetchWithRetry('/api/products');
         renderProducts();
         updateFilterCounts();
       } catch (err) {
@@ -184,20 +221,22 @@ document.addEventListener('DOMContentLoaded', () => {
       if (noMatchBox) noMatchBox.style.display = 'none';
 
       catalogGrid.innerHTML = filtered.map(p => {
-        const imgSrc = p.image_path ? `/${p.image_path}` : '';
+        const imgSrc = p.image_path ? (p.image_path.startsWith('data:') || p.image_path.startsWith('http') ? p.image_path : `/${p.image_path}`) : '';
         const waText = p.whatsapp_text || encodeURIComponent('Hello North Wide Traders, I am interested in: ' + p.name);
         const gradeIcon = p.grade_badge_icon || 'fas fa-certificate';
+        const fallbackImg = `this.onerror=null; this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><rect fill=%22%23232734%22 width=%2248%22 height=%2248%22/><text x=%2224%22 y=%2228%22 fill=%22%23555%22 text-anchor=%22middle%22 font-size=%2212%22>?</text></svg>'`;
 
         return `
           <div class="product-card catalog-product-card" data-category="${escapeAttr(p.category_slug)}">
             <div class="product-image">
-              ${imgSrc ? `<img src="${imgSrc}" alt="${escapeAttr(p.name)}" class="product-img" loading="lazy">` : ''}
+              ${imgSrc ? `<img src="${imgSrc}" alt="${escapeAttr(p.name)}" class="product-img" loading="lazy" onerror="${fallbackImg}">` : ''}
               <span class="product-badge">${escapeHtml(p.badge_text || p.category_name)}</span>
             </div>
             <div class="product-info">
               <h4 class="product-name">${escapeHtml(p.name)}</h4>
               ${p.grade_badge_text ? `<span class="product-grade-badge"><i class="${gradeIcon}"></i> ${escapeHtml(p.grade_badge_text)}</span>` : ''}
-              <p class="product-spec">${escapeHtml(p.short_description || '')}</p>
+              <p class="product-spec">${escapeHtml(p.short_description || '').replace(/\n/g, '<br>')}</p>
+              ${p.full_description ? `<p class="product-desc" style="font-size: 0.85rem; color: #94A3B8; margin-top: 0.5rem; line-height: 1.4;">${escapeHtml(p.full_description).replace(/\n/g, '<br>')}</p>` : ''}
               <div class="product-actions" style="margin-top: 1rem;">
                 <a href="https://wa.me/919997829094?text=${waText}" target="_blank" class="btn btn-whatsapp btn-sm" style="width: 100%; justify-content: center; gap: 0.5rem; font-weight: 600;">
                   <i class="fab fa-whatsapp"></i> Chat on WhatsApp
@@ -209,8 +248,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateFilterCounts() {
-      const allPill = document.querySelector('.filter-pill[data-category="all"]');
-      if (allPill) allPill.textContent = `All Products (${allProducts.length})`;
+      if (allCategories.length > 0) {
+        renderFilterPills(); // Re-render pills with updated count
+      } else {
+        const allPill = document.querySelector('.filter-pill[data-category="all"]');
+        if (allPill) allPill.textContent = `All Products (${allProducts.length})`;
+      }
     }
 
     function escapeHtml(str) {
@@ -224,14 +267,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Filter pill click
-    filterPills.forEach(pill => {
-      pill.addEventListener('click', () => {
-        filterPills.forEach(p => p.classList.remove('active'));
-        pill.classList.add('active');
-        currentCategory = pill.dataset.category;
-        renderProducts();
+    function attachFilterPillEvents() {
+      const pills = document.querySelectorAll('.filter-pill');
+      pills.forEach(pill => {
+        pill.addEventListener('click', () => {
+          pills.forEach(p => p.classList.remove('active'));
+          pill.classList.add('active');
+          currentCategory = pill.dataset.category;
+          renderProducts();
+        });
       });
-    });
+    }
 
     // Real-time search
     if (productSearch) {
@@ -240,8 +286,11 @@ document.addEventListener('DOMContentLoaded', () => {
         renderProducts();
       });
     }
+    
+    // Initial static event attach
+    attachFilterPillEvents();
 
-    // Load products from API
-    loadProductsFromAPI();
+    // Load data from API concurrently
+    Promise.all([loadCategoriesFromAPI(), loadProductsFromAPI()]);
   }
 });

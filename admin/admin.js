@@ -87,6 +87,8 @@
   const quickAddProduct = document.getElementById('quickAddProduct');
   const quickViewProducts = document.getElementById('quickViewProducts');
   const quickManageCategories = document.getElementById('quickManageCategories');
+  const visitSiteTopBtn = document.getElementById('visitSiteTopBtn');
+  const visitSiteQuickBtn = document.getElementById('visitSiteQuickBtn');
 
   // State
   let allProducts = [];
@@ -96,7 +98,7 @@
 
   // ─── API Helpers ─────────────────────────────────────────────────────────
 
-  async function api(url, options = {}) {
+  async function api(url, options = {}, retries = 0, timeout = 10000) {
     const token = sessionStorage.getItem('nwt_admin_token');
     const defaults = {
       headers: { 'Content-Type': 'application/json' },
@@ -113,16 +115,32 @@
     if (options.body instanceof FormData) {
       delete config.headers['Content-Type'];
     }
-    const res = await fetch(url, config);
-    const data = await res.json();
-    if (!res.ok) {
-      if (res.status === 401 && !url.includes('/login') && !url.includes('/session')) {
-        sessionStorage.removeItem('nwt_admin_token');
-        showLogin();
+    
+    // Determine if we should retry (only for GET requests and when retries > 0)
+    const isGet = !config.method || config.method.toUpperCase() === 'GET';
+    const maxRetries = isGet ? retries : 0;
+    
+    for (let i = 0; i <= maxRetries; i++) {
+      try {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeout);
+        const res = await fetch(url, { ...config, signal: controller.signal });
+        clearTimeout(id);
+        
+        const data = await res.json();
+        if (!res.ok) {
+          if (res.status === 401 && !url.includes('/login') && !url.includes('/session')) {
+            sessionStorage.removeItem('nwt_admin_token');
+            showLogin();
+          }
+          throw new Error(data.error || 'Request failed');
+        }
+        return data;
+      } catch (err) {
+        if (i === maxRetries) throw err;
+        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // Exponential backoff
       }
-      throw new Error(data.error || 'Request failed');
     }
-    return data;
   }
 
   // ─── Toast Notifications ─────────────────────────────────────────────────
@@ -267,12 +285,20 @@
   if (quickManageCategories) {
     quickManageCategories.addEventListener('click', () => switchSection('categories'));
   }
+  
+  const handleVisitSite = (e) => {
+    e.preventDefault();
+    window.open(window.location.origin, '_blank');
+  };
+  
+  if (visitSiteTopBtn) visitSiteTopBtn.addEventListener('click', handleVisitSite);
+  if (visitSiteQuickBtn) visitSiteQuickBtn.addEventListener('click', handleVisitSite);
 
   // ─── Stats ───────────────────────────────────────────────────────────────
 
   async function loadStats() {
     try {
-      const stats = await api('/api/admin/stats');
+      const stats = await api('/api/admin/stats', {}, 3, 8000);
       document.getElementById('statTotal').textContent = stats.totalProducts;
       document.getElementById('statPublished').textContent = stats.publishedProducts;
       document.getElementById('statDraft').textContent = stats.draftProducts;
@@ -286,7 +312,7 @@
 
   async function loadProducts() {
     try {
-      allProducts = await api('/api/admin/products');
+      allProducts = await api('/api/admin/products', {}, 3, 8000);
       renderProductsTable();
     } catch (err) {
       showToast('Failed to load products: ' + err.message, 'error');
@@ -329,7 +355,7 @@
         <td>${imgSrc ? `<img src="${imgSrc}" class="product-thumb" alt="${escapeText(p.name)}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><rect fill=%22%23232734%22 width=%2248%22 height=%2248%22/><text x=%2224%22 y=%2228%22 fill=%22%23555%22 text-anchor=%22middle%22 font-size=%2212%22>?</text></svg>'">` : '<div class="product-thumb" style="background:#232734;"></div>'}</td>
         <td>
           <div class="product-name-cell product-clickable" data-action="edit" data-id="${p.id}">${escapeText(p.name)}</div>
-          <div class="product-desc-preview">${escapeText(desc)}</div>
+          <div class="product-desc-preview">${escapeText(desc).replace(/\n/g, '<br>')}</div>
         </td>
         <td>${escapeText(p.category_name || '')}</td>
         <td><span class="status-badge ${statusClass}">${p.status}</span></td>
@@ -383,7 +409,7 @@
   async function handleEditProduct(id) {
     try {
       showToast('Loading product details...', 'info');
-      const product = await api(`/api/admin/products/${id}`);
+      const product = await api(`/api/admin/products/${id}`, {}, 3, 8000);
       await openProductForm(product);
     } catch (err) {
       console.error('Failed to load product for edit:', err);
@@ -443,7 +469,9 @@
       }
 
       if (product.image_path) {
-        const fullImg = product.image_path.startsWith('/') ? product.image_path : '/' + product.image_path;
+        const fullImg = product.image_path.startsWith('/') || product.image_path.startsWith('data:') || product.image_path.startsWith('http') 
+          ? product.image_path 
+          : '/' + product.image_path;
         previewImg.src = fullImg;
         imagePreview.style.display = 'block';
         imagePlaceholder.style.display = 'none';
@@ -606,7 +634,7 @@
 
   async function loadCategories() {
     try {
-      allCategories = await api('/api/admin/categories');
+      allCategories = await api('/api/admin/categories', {}, 3, 8000);
       renderCategories();
       populateCategoryFilters();
     } catch (err) {

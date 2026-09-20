@@ -53,8 +53,8 @@ app.use(helmet({
 
 // ─── Body Parsing ───────────────────────────────────────────────────────────
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // ─── Authentication Middleware ──────────────────────────────────────────────
 // Replaces in-memory express-session with stateless cryptographically signed tokens.
@@ -148,7 +148,7 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
-  res.status(500).json({ error: 'Internal server error.' });
+  res.status(500).json({ error: 'Internal server error: ' + (err.message || 'Unknown error') });
 });
 
 // ─── Start Server / Export for Serverless ───────────────────────────────────
