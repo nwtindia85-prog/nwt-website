@@ -129,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const filterPillsContainer = document.querySelector('.filter-pills');
   const noMatchBox = document.getElementById('noMatchBox');
 
-  if (catalogGrid && catalogGrid.closest('.products-grid')) {
+  if (catalogGrid) {
     let allProducts = [];
     let allCategories = [];
     let currentCategory = 'all';
