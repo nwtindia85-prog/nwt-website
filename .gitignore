@@ -1,0 +1,6 @@
+node_modules/
+data/
+uploads/products/*
+!uploads/products/.gitkeep
+.env
+*.db
