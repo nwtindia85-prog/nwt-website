@@ -1,0 +1,3 @@
+User-agent: *
+Disallow: /secure-admin/
+Disallow: /api/admin/

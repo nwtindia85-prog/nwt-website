@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/secure-admin",
+      "destination": "/admin/index.html"
+    },
+    {
+      "source": "/secure-admin/(.*)",
+      "destination": "/admin/$1"
+    }
+  ]
+}

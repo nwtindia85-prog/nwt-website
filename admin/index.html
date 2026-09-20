@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Admin Dashboard | North Wide Traders</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- Admin Styles -->
+  <link rel="stylesheet" href="/secure-admin/admin.css?v=1.1">
+</head>
+<body>
+
+  <!-- ═══ LOGIN SCREEN ═══ -->
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <div class="login-logo">
+        <i class="fas fa-shield-halved"></i>
+      </div>
+      <h1 class="login-title">Admin Access</h1>
+      <p class="login-subtitle">North Wide Traders India OPC Pvt. Ltd.</p>
+
+      <form id="loginForm" class="login-form" autocomplete="off">
+        <div class="form-group">
+          <label for="loginUsername"><i class="fas fa-user"></i> Username</label>
+          <input type="text" id="loginUsername" name="username" required autofocus placeholder="Enter admin username">
+        </div>
+        <div class="form-group">
+          <label for="loginPassword"><i class="fas fa-lock"></i> Password</label>
+          <input type="password" id="loginPassword" name="password" required placeholder="Enter password">
+        </div>
+        <div id="loginError" class="login-error" style="display:none;"></div>
+        <button type="submit" class="btn-login" id="loginBtn">
+          <i class="fas fa-sign-in-alt"></i> Sign In
+        </button>
+      </form>
+      <p class="login-footer">Secure Admin Panel — Authorized Personnel Only</p>
+    </div>
+  </div>
+
+  <!-- ═══ ADMIN DASHBOARD ═══ -->
+  <div id="dashboardScreen" class="dashboard" style="display:none;">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <i class="fas fa-boxes-stacked"></i>
+          <span>NWT Admin</span>
+        </div>
+        <button class="sidebar-close" id="sidebarClose"><i class="fas fa-times"></i></button>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-section="overview">
+          <i class="fas fa-chart-pie"></i> <span>Overview</span>
+        </a>
+        <a href="#" class="nav-item" data-section="products">
+          <i class="fas fa-boxes-stacked"></i> <span>Products</span>
+        </a>
+        <a href="#" class="nav-item" data-section="categories">
+          <i class="fas fa-tags"></i> <span>Categories</span>
+        </a>
+        <a href="#" class="nav-item" data-section="settings">
+          <i class="fas fa-cog"></i> <span>Settings</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-user">
+          <i class="fas fa-user-shield"></i>
+          <span id="sidebarUsername">Admin</span>
+        </div>
+        <button class="btn-logout" id="logoutBtn">
+          <i class="fas fa-sign-out-alt"></i> Logout
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <button class="menu-toggle" id="menuToggle"><i class="fas fa-bars"></i></button>
+        <h2 class="topbar-title" id="pageTitle">Overview</h2>
+        <div class="topbar-actions">
+          <a href="/" target="_blank" class="btn-view-site"><i class="fas fa-external-link-alt"></i> View Site</a>
+        </div>
+      </header>
+
+      <!-- Content Area -->
+      <div class="content-area" id="contentArea">
+
+        <!-- ═══ OVERVIEW SECTION ═══ -->
+        <section id="sectionOverview" class="section-panel active">
+          <div class="stats-grid">
+            <div class="stat-card stat-total">
+              <div class="stat-icon"><i class="fas fa-boxes-stacked"></i></div>
+              <div class="stat-info">
+                <span class="stat-number" id="statTotal">0</span>
+                <span class="stat-label">Total Products</span>
+              </div>
+            </div>
+            <div class="stat-card stat-published">
+              <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+              <div class="stat-info">
+                <span class="stat-number" id="statPublished">0</span>
+                <span class="stat-label">Published</span>
+              </div>
+            </div>
+            <div class="stat-card stat-draft">
+              <div class="stat-icon"><i class="fas fa-file-pen"></i></div>
+              <div class="stat-info">
+                <span class="stat-number" id="statDraft">0</span>
+                <span class="stat-label">Drafts</span>
+              </div>
+            </div>
+            <div class="stat-card stat-categories">
+              <div class="stat-icon"><i class="fas fa-tags"></i></div>
+              <div class="stat-info">
+                <span class="stat-number" id="statCategories">0</span>
+                <span class="stat-label">Categories</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="overview-quick-actions">
+            <h3><i class="fas fa-bolt"></i> Quick Actions</h3>
+            <div class="quick-actions-grid">
+              <button class="quick-action-btn" id="quickAddProduct">
+                <i class="fas fa-plus-circle"></i> Add New Product
+              </button>
+              <button class="quick-action-btn" id="quickViewProducts">
+                <i class="fas fa-list"></i> View All Products
+              </button>
+              <button class="quick-action-btn" id="quickManageCategories">
+                <i class="fas fa-tags"></i> Manage Categories
+              </button>
+              <a href="/" target="_blank" class="quick-action-btn">
+                <i class="fas fa-globe"></i> Visit Public Website
+              </a>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ PRODUCTS SECTION ═══ -->
+        <section id="sectionProducts" class="section-panel">
+          <div class="section-header">
+            <div class="section-header-left">
+              <div class="search-input">
+                <i class="fas fa-search"></i>
+                <input type="text" id="adminProductSearch" placeholder="Search products...">
+              </div>
+              <select id="adminStatusFilter" class="filter-select">
+                <option value="all">All Status</option>
+                <option value="published">Published</option>
+                <option value="draft">Draft</option>
+                <option value="unpublished">Unpublished</option>
+              </select>
+              <select id="adminCategoryFilter" class="filter-select">
+                <option value="all">All Categories</option>
+              </select>
+            </div>
+            <button class="btn-add" id="addProductBtn">
+              <i class="fas fa-plus"></i> Add Product
+            </button>
+          </div>
+
+          <div class="products-table-wrap">
+            <table class="products-table" id="productsTable">
+              <thead>
+                <tr>
+                  <th width="60">Image</th>
+                  <th>Product Name</th>
+                  <th>Category</th>
+                  <th>Status</th>
+                  <th>Updated</th>
+                  <th width="140">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="productsTableBody">
+              </tbody>
+            </table>
+          </div>
+          <div class="empty-state" id="productsEmpty" style="display:none;">
+            <i class="fas fa-inbox"></i>
+            <p>No products found</p>
+          </div>
+        </section>
+
+        <!-- ═══ PRODUCT FORM (Add/Edit) ═══ -->
+        <section id="sectionProductForm" class="section-panel">
+          <div class="form-header">
+            <button class="btn-back" id="backToProducts"><i class="fas fa-arrow-left"></i> Back to Products</button>
+            <h3 id="formTitle">Add New Product</h3>
+          </div>
+
+          <form id="productForm" class="product-form">
+            <input type="hidden" id="productId" value="">
+
+            <div class="form-grid">
+              <!-- Left Column -->
+              <div class="form-column">
+                <div class="form-group">
+                  <label for="productName">Product Name <span class="required">*</span></label>
+                  <input type="text" id="productName" required placeholder="e.g. Digital Analytical Balance">
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="productCategory">Category <span class="required">*</span></label>
+                    <select id="productCategory" required>
+                      <option value="">Select Category</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="productStatus">Status</label>
+                    <select id="productStatus">
+                      <option value="draft">Draft</option>
+                      <option value="published">Published</option>
+                      <option value="unpublished">Unpublished</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="productShortDesc">Short Description</label>
+                  <textarea id="productShortDesc" rows="3" placeholder="Brief product description for catalogue cards..."></textarea>
+                </div>
+
+                <div class="form-group">
+                  <label for="productFullDesc">Full Description</label>
+                  <textarea id="productFullDesc" rows="5" placeholder="Detailed product description..."></textarea>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="productSKU">Product Code / SKU</label>
+                    <input type="text" id="productSKU" placeholder="e.g. NWT-SCI-001">
+                  </div>
+                  <div class="form-group">
+                    <label for="productBrand">Brand / Manufacturer</label>
+                    <input type="text" id="productBrand" placeholder="e.g. Generic">
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="productBadge">Badge Text</label>
+                    <input type="text" id="productBadge" placeholder="e.g. Scientific">
+                  </div>
+                  <div class="form-group">
+                    <label for="productType">Product Type</label>
+                    <input type="text" id="productType" placeholder="e.g. Equipment">
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="productGradeBadge">Grade Badge Text</label>
+                    <input type="text" id="productGradeBadge" placeholder="e.g. ISO & CE Certified">
+                  </div>
+                  <div class="form-group">
+                    <label for="productGradeIcon">Grade Badge Icon</label>
+                    <input type="text" id="productGradeIcon" placeholder="e.g. fas fa-certificate">
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="productWhatsapp">WhatsApp Inquiry Text</label>
+                  <input type="text" id="productWhatsapp" placeholder="e.g. Inquiry%20for%20Product%20Name">
+                </div>
+              </div>
+
+              <!-- Right Column -->
+              <div class="form-column">
+                <div class="form-group">
+                  <label>Product Image</label>
+                  <div class="image-upload-area" id="imageUploadArea">
+                    <div class="image-preview" id="imagePreview" style="display:none;">
+                      <img id="previewImg" src="" alt="Preview">
+                      <button type="button" class="btn-remove-image" id="removeImage"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div class="image-placeholder" id="imagePlaceholder">
+                      <i class="fas fa-cloud-upload-alt"></i>
+                      <p>Click to upload or drag & drop</p>
+                      <span>JPG, PNG, WebP — Max 10MB</span>
+                    </div>
+                    <input type="file" id="imageFileInput" accept="image/*" style="display:none;">
+                  </div>
+                  <input type="hidden" id="productImagePath" value="">
+                </div>
+
+                <div class="form-group">
+                  <label for="productSpecifications">Specifications (one per line)</label>
+                  <textarea id="productSpecifications" rows="6" placeholder="Capacity: 220g&#10;Readability: 0.1mg&#10;Calibration: Internal"></textarea>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" class="btn-cancel" id="cancelForm">Cancel</button>
+              <button type="submit" class="btn-save" id="saveProductBtn">
+                <i class="fas fa-save"></i> Save Product
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <!-- ═══ CATEGORIES SECTION ═══ -->
+        <section id="sectionCategories" class="section-panel">
+          <div class="section-header">
+            <h3>Categories</h3>
+            <button class="btn-add" id="addCategoryBtn">
+              <i class="fas fa-plus"></i> Add Category
+            </button>
+          </div>
+
+          <div class="categories-grid" id="categoriesGrid">
+          </div>
+        </section>
+
+        <!-- ═══ SETTINGS SECTION ═══ -->
+        <section id="sectionSettings" class="section-panel">
+          <div class="settings-card">
+            <h3><i class="fas fa-key"></i> Change Password</h3>
+            <form id="passwordForm">
+              <div class="form-group">
+                <label for="currentPassword">Current Password</label>
+                <input type="password" id="currentPassword" required placeholder="Enter current password">
+              </div>
+              <div class="form-group">
+                <label for="newPassword">New Password</label>
+                <input type="password" id="newPassword" required placeholder="Enter new password (min 6 chars)">
+              </div>
+              <div class="form-group">
+                <label for="confirmPassword">Confirm New Password</label>
+                <input type="password" id="confirmPassword" required placeholder="Confirm new password">
+              </div>
+              <div id="passwordMsg" class="form-message" style="display:none;"></div>
+              <button type="submit" class="btn-save"><i class="fas fa-save"></i> Update Password</button>
+            </form>
+          </div>
+
+          <div class="settings-card">
+            <h3><i class="fas fa-info-circle"></i> System Info</h3>
+            <div class="info-row"><span>Admin URL:</span> <code>/secure-admin</code></div>
+            <div class="info-row"><span>Public API:</span> <code>/api/products</code></div>
+            <div class="info-row"><span>Version:</span> <code>1.0.0</code></div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- ═══ CATEGORY FORM MODAL (Body Level) ═══ -->
+  <div class="modal-overlay" id="categoryModal" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="categoryModalTitle">Add Category</h3>
+        <button class="modal-close" id="closeCategoryModal"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="categoryForm">
+        <input type="hidden" id="categoryId" value="">
+        <div class="form-group">
+          <label for="categoryName">Category Name <span class="required">*</span></label>
+          <input type="text" id="categoryName" required placeholder="e.g. Scientific Equipment">
+        </div>
+        <div class="form-group">
+          <label for="categorySlug">Slug <span class="required">*</span></label>
+          <input type="text" id="categorySlug" required placeholder="e.g. scientific">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="categoryIcon">Icon Class</label>
+            <input type="text" id="categoryIcon" placeholder="e.g. fas fa-microscope">
+          </div>
+          <div class="form-group">
+            <label for="categoryOrder">Display Order</label>
+            <input type="number" id="categoryOrder" value="0" min="0">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel" id="cancelCategoryForm">Cancel</button>
+          <button type="submit" class="btn-save" id="saveCategoryBtn"><i class="fas fa-save"></i> Save Category</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══ DELETE CATEGORY CONFIRMATION MODAL ═══ -->
+  <div class="modal-overlay" id="deleteCategoryModal" style="display:none;">
+    <div class="modal-card modal-danger">
+      <div class="modal-header">
+        <h3><i class="fas fa-exclamation-triangle"></i> Confirm Category Deletion</h3>
+        <button class="modal-close" id="closeDeleteCategoryModal"><i class="fas fa-times"></i></button>
+      </div>
+      <p class="modal-body-text">Are you sure you want to permanently delete this category?</p>
+      <p class="modal-body-sub" id="deleteCategoryName"></p>
+      <p style="font-size:0.8rem;color:var(--admin-warning);margin-bottom:1.25rem;">
+        <i class="fas fa-info-circle"></i> Categories with assigned products cannot be deleted until products are reassigned.
+      </p>
+      <div class="modal-footer">
+        <button class="btn-cancel" id="cancelDeleteCategory">Cancel</button>
+        <button class="btn-danger" id="confirmDeleteCategory"><i class="fas fa-trash"></i> Delete Category</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ DELETE PRODUCT CONFIRMATION MODAL ═══ -->
+  <div class="modal-overlay" id="deleteModal" style="display:none;">
+    <div class="modal-card modal-danger">
+      <div class="modal-header">
+        <h3><i class="fas fa-exclamation-triangle"></i> Confirm Deletion</h3>
+        <button class="modal-close" id="closeDeleteModal"><i class="fas fa-times"></i></button>
+      </div>
+      <p class="modal-body-text">Are you sure you want to permanently delete this product?</p>
+      <p class="modal-body-sub" id="deleteProductName"></p>
+      <div class="modal-footer">
+        <button class="btn-cancel" id="cancelDelete">Cancel</button>
+        <button class="btn-danger" id="confirmDelete"><i class="fas fa-trash"></i> Delete Permanently</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Admin Script -->
+  <script src="/secure-admin/admin.js?v=1.2"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "northwide-traders-website",
+  "version": "1.0.0",
+  "description": "North Wide Traders India OPC Private Limited — Official Website with Admin Catalogue Management",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "setup": "node db/setup-admin.js",
+    "seed": "node db/seed.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^11.7.0",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "multer": "^1.4.5-lts.1"
+  },
+  "private": true
+}
